@@ -34,15 +34,20 @@ if (!fs.existsSync(path.join(__dirname, 'uploads'))) {
   fs.mkdirSync(path.join(__dirname, 'uploads'), { recursive: true });
 }
 
-// Conexión a la base de datos inventario_db mediante Pool de Promesas
+// ==================== CONEXIÓN A LA BASE DE DATOS ====================
+// Se actualizó 'inventario_db' a 'defaultdb' y se agregó el objeto 'ssl' para Aiven
 const pool = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || 'Baxter123',
-  database: process.env.DB_NAME || 'inventario_db',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_NAME || 'defaultdb',
+  port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
   waitForConnections: true,
   connectionLimit: 10,
-  queueLimit: 0
+  queueLimit: 0,
+  ssl: {
+    rejectUnauthorized: false // Necesario para conexiones seguras con Aiven
+  }
 });
 
 // ==================== GENERACIÓN DE CÓDIGOS QR ====================
@@ -692,7 +697,7 @@ app.get("/notificaciones/:maestro", async (req, res) => {
     res.status(500).json({ status: "error", mensaje: err.message });
   }
 });
-// Endpoints requeridos por la pantalla de Reportes
+
 app.get('/reportes/total', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT COUNT(*) AS total FROM prestamos');
@@ -720,12 +725,10 @@ app.get('/reportes/devueltos', async (req, res) => {
   }
 });
 
-// Endpoint para Reportes Filtrados sin alterar la estructura o datos de la Base de Datos
 app.get('/reportes/filtrados', async (req, res) => {
   try {
     const { maestro, estado, fechaInicio, fechaFin } = req.query;
 
-    // Usamos IFNULL para evitar que los NULL rompan las búsquedas o concatenaciones
     let sql = `
       SELECT 
         p.id, 
@@ -742,20 +745,17 @@ app.get('/reportes/filtrados', async (req, res) => {
     
     const params = [];
 
-    // 1. Filtro por Maestro (compara ignorando mayúsculas y espacios)
     if (maestro && maestro.trim() !== '') {
       sql += ` AND LOWER(p.maestro) LIKE LOWER(?)`;
       params.push(`%${maestro.trim()}%`);
     }
 
-    // 2. Filtro por Estado (Pendiente / Devuelto)
     if (estado === 'pendiente') {
       sql += ` AND p.fecha_devolucion IS NULL`;
     } else if (estado === 'devuelto') {
       sql += ` AND p.fecha_devolucion IS NOT NULL`;
     }
 
-    // 3. Filtro por Rango de Fechas (cubre desde las 00:00:00 del primer día hasta las 23:59:59 del último)
     if (fechaInicio && fechaInicio.trim() !== '') {
       sql += ` AND p.fecha_prestamo >= ?`;
       params.push(`${fechaInicio.trim()} 00:00:00`);
@@ -775,9 +775,8 @@ app.get('/reportes/filtrados', async (req, res) => {
     res.status(500).json({ error: 'Error interno del servidor al filtrar reportes' });
   }
 });
+
 // ==================== INICIO DEL SERVIDOR ====================
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Servidor Inventario Escolar corriendo en puerto ${PORT}`);
-  // Descomenta la siguiente línea si deseas que verifique y genere los QR automáticamente
-  // sincronizarQRsMateriales();
 });
